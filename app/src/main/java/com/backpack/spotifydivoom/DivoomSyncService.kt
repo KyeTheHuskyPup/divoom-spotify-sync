@@ -12,7 +12,10 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,6 +25,7 @@ import java.io.OutputStream
 import java.util.UUID
 
 class DivoomSyncService : Service() {
+
     private val job = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.IO + job)
     private var socket: BluetoothSocket? = null
@@ -43,7 +47,7 @@ class DivoomSyncService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        startForeground(101, buildNotification("Divoom Sync Running"))
+        startForeground(101, buildNotification("Sync Active"))
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -75,12 +79,30 @@ class DivoomSyncService : Service() {
                 disconnect()
                 val adapter = BluetoothAdapter.getDefaultAdapter() ?: return@launch
                 val device: BluetoothDevice = adapter.getRemoteDevice(mac)
-                socket = device.createRfcommSocketToServiceRecord(SPP_UUID)
                 adapter.cancelDiscovery()
+
+                // Fallback attempt: Insecure socket first, then secure, then RFCOMM channel reflection
+                socket = try {
+                    device.createInsecureRfcommSocketToServiceRecord(SPP_UUID)
+                } catch (e: Exception) {
+                    device.createRfcommSocketToServiceRecord(SPP_UUID)
+                }
+
                 socket?.connect()
                 outputStream = socket?.outputStream
+
+                showToast("Connected to Backpack!")
             } catch (e: Exception) {
-                e.printStackTrace()
+                // Secondary fallback via direct reflection on channel 1
+                try {
+                    val method = device.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
+                    socket = method.invoke(device, 1) as BluetoothSocket
+                    socket?.connect()
+                    outputStream = socket?.outputStream
+                    showToast("Connected via fallback port!")
+                } catch (ex: Exception) {
+                    showToast("Bluetooth Connection Failed: ${ex.message}")
+                }
             }
         }
     }
@@ -94,9 +116,16 @@ class DivoomSyncService : Service() {
                 val packet = DivoomPacketEncoder.encodeImageToFrame(bmp)
                 outputStream?.write(packet)
                 outputStream?.flush()
+                showToast("Art pushed to backpack!")
             } catch (e: Exception) {
-                e.printStackTrace()
+                showToast("Push failed: ${e.message}")
             }
+        }
+    }
+
+    private fun showToast(msg: String) {
+        Handler(Looper.getMainLooper()).post {
+            Toast.makeText(applicationContext, msg, Toast.LENGTH_SHORT).show()
         }
     }
 
