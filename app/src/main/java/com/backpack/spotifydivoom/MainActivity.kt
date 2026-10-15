@@ -3,53 +3,59 @@ package com.backpack.spotifydivoom
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
-import android.content.ComponentName
+import android.bluetooth.BluetoothDevice
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
-import android.widget.ArrayAdapter
-import android.widget.Toast
+import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
-import com.backpack.spotifydivoom.databinding.ActivityMainBinding
 
 class MainActivity : AppCompatActivity() {
-    private lateinit var binding: ActivityMainBinding
-    private val pairedDevices = mutableListOf<Pair<String, String>>()
+
+    private lateinit var spinnerDevices: Spinner
+    private lateinit var btnStart: Button
+    private lateinit var btnStop: Button
+    private lateinit var btnTest: Button
+    private val pairedList = mutableListOf<BluetoothDevice>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        binding = ActivityMainBinding.inflate(layoutInflater)
-        setContentView(binding.root)
+        setContentView(R.layout.activity_main)
+
+        spinnerDevices = findViewById(R.id.spinnerDevices)
+        btnStart = findViewById(R.id.btnStart)
+        btnStop = findViewById(R.id.btnStop)
+        btnTest = findViewById(R.id.btnTest)
 
         checkPermissions()
         loadPairedDevices()
 
-        binding.btnStart.setOnClickListener {
-            if (!isNotificationAccessGranted()) {
-                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                Toast.makeText(this, "Enable Notification Access for this app", Toast.LENGTH_LONG).show()
-                return@setOnClickListener
-            }
-            val selectedIndex = binding.spinnerDevices.selectedItemPosition
-            if (selectedIndex >= 0 && selectedIndex < pairedDevices.size) {
-                val mac = pairedDevices[selectedIndex].second
-                val serviceIntent = Intent(this, DivoomSyncService::class.java).apply {
+        btnStart.setOnClickListener {
+            if (pairedList.isNotEmpty()) {
+                val selected = pairedList[spinnerDevices.selectedItemPosition]
+                val intent = Intent(this, DivoomSyncService::class.java).apply {
                     action = DivoomSyncService.ACTION_START
-                    putExtra(DivoomSyncService.EXTRA_MAC, mac)
+                    putExtra(DivoomSyncService.EXTRA_MAC, selected.address)
                 }
-                startForegroundService(serviceIntent)
-                Toast.makeText(this, "Sync Started!", Toast.LENGTH_SHORT).show()
+                startService(intent)
+                Toast.makeText(this, "Starting Sync...", Toast.LENGTH_SHORT).show()
             }
         }
 
-        binding.btnStop.setOnClickListener {
-            val serviceIntent = Intent(this, DivoomSyncService::class.java).apply {
+        btnTest.setOnClickListener {
+            val intent = Intent(this, DivoomSyncService::class.java).apply {
+                action = DivoomSyncService.ACTION_TEST_RED
+            }
+            startService(intent)
+        }
+
+        btnStop.setOnClickListener {
+            val intent = Intent(this, DivoomSyncService::class.java).apply {
                 action = DivoomSyncService.ACTION_STOP
             }
-            startService(serviceIntent)
+            startService(intent)
             Toast.makeText(this, "Sync Stopped", Toast.LENGTH_SHORT).show()
         }
     }
@@ -57,35 +63,36 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("MissingPermission")
     private fun loadPairedDevices() {
         val adapter = BluetoothAdapter.getDefaultAdapter() ?: return
-        val devices = adapter.bondedDevices
-        pairedDevices.clear()
+        pairedList.clear()
         val names = mutableListOf<String>()
-        for (device in devices) {
-            val name = device.name ?: "Unknown"
-            pairedDevices.add(Pair(name, device.address))
-            names.add("$name (${device.address})")
-        }
-        val arrayAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, names)
-        binding.spinnerDevices.adapter = arrayAdapter
-    }
 
-    private fun isNotificationAccessGranted(): Boolean {
-        val listeners = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
-        val component = ComponentName(this, SpotifyMediaListenerService::class.java).flattenToString()
-        return listeners != null && listeners.contains(component)
+        val bonded = adapter.bondedDevices
+        for (dev in bonded) {
+            pairedList.add(dev)
+            names.add("${dev.name ?: "Unknown"} (${dev.address})")
+        }
+
+        val arrayAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, names)
+        spinnerDevices.adapter = arrayAdapter
     }
 
     private fun checkPermissions() {
-        val permissions = mutableListOf<String>()
+        val perms = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
-            permissions.add(Manifest.permission.BLUETOOTH_SCAN)
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                perms.add(Manifest.permission.BLUETOOTH_CONNECT)
+            }
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+                perms.add(Manifest.permission.BLUETOOTH_SCAN)
+            }
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                perms.add(Manifest.permission.POST_NOTIFICATIONS)
+            }
         }
-        if (permissions.any { ActivityCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }) {
-            ActivityCompat.requestPermissions(this, permissions.toTypedArray(), 100)
+        if (perms.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, perms.toTypedArray(), 100)
         }
     }
 }
