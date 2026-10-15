@@ -1,95 +1,72 @@
 package com.backpack.spotifydivoom
 
-import android.graphics.Bitmap
 import java.io.ByteArrayOutputStream
+import java.nio.charset.StandardCharsets
 
 object DivoomPacketEncoder {
 
     // Switch backpack channel to custom buffer
     fun switchChannel(channel: Byte = 0x02): ByteArray {
-        return wrapPacket(byteArrayOf(0x45, channel))
+        return makePacket(byteArrayOf(0x45, channel))
     }
 
     // Set brightness (0-100)
     fun setBrightness(percent: Int): ByteArray {
         val lvl = percent.coerceIn(0, 100).toByte()
-        return wrapPacket(byteArrayOf(0x74, lvl))
+        return makePacket(byteArrayOf(0x74, lvl))
     }
 
-    // Static solid color frame test for 16x16
-    fun encodeSolidColor(r: Int, g: Int, b: Int): ByteArray {
-        val stream = ByteArrayOutputStream()
-        // Divoom 0x44 direct frame header:
-        // [0x44, frame_id_lo, frame_id_hi, delay_lo, delay_hi, color_mode (0 = 24-bit RGB)]
-        stream.write(0x44)
-        stream.write(0x00)
-        stream.write(0x00)
-        stream.write(0x00)
-        stream.write(0x00)
-        stream.write(0x00)
-
-        for (i in 0 until 256) {
-            stream.write(r and 0xFF)
-            stream.write(g and 0xFF)
-            stream.write(b and 0xFF)
-        }
-        return wrapPacket(stream.toByteArray())
-    }
-
-    // Encodes a 16x16 bitmap directly into 24-bit raw RGB stream
-    fun encodeImage(original: Bitmap): ByteArray {
-        val scaled = Bitmap.createScaledBitmap(original, 16, 16, false)
+    // Divoom Built-in Scrolling Text Command (0x73)
+    // R, G, B = 255, 180, 0 (classic amber rail indicator color)
+    fun encodeMarqueeText(text: String, r: Int = 255, g: Int = 180, b: Int = 0): ByteArray {
+        val textBytes = text.toByteArray(StandardCharsets.UTF_8)
         val stream = ByteArrayOutputStream()
 
-        stream.write(0x44)
-        stream.write(0x00)
-        stream.write(0x00)
-        stream.write(0x00)
-        stream.write(0x00)
-        stream.write(0x00)
+        stream.write(0x73) // Marquee Command ID
+        stream.write(0x00) // Slot ID (0-19)
+        stream.write(0x00) // Alignment / Mode
+        stream.write(r and 0xFF) // Text Color R
+        stream.write(g and 0xFF) // Text Color G
+        stream.write(b and 0xFF) // Text Color B
+        stream.write(0x40)       // Scroll Speed (0x00 - 0x64)
+        stream.write(0x00)       // Direction (0x00 = Left, 0x01 = Right)
+        stream.write(0x00)       // Font ID (0 = Standard 5x7)
+        stream.write(textBytes.size and 0xFF) // String length (bytes)
+        stream.write(textBytes)
 
-        for (y in 0 until 16) {
-            for (x in 0 until 16) {
-                val pixel = scaled.getPixel(x, y)
-                stream.write((pixel shr 16) and 0xFF) // R
-                stream.write((pixel shr 8) and 0xFF)  // G
-                stream.write(pixel and 0xFF)         // B
-            }
-        }
-        return wrapPacket(stream.toByteArray())
+        return makePacket(stream.toByteArray())
     }
 
-    private fun wrapPacket(payload: ByteArray): ByteArray {
+    private fun makePacket(payload: ByteArray): ByteArray {
         val length = payload.size + 2
-        var sum = 0
+        var crc = 0
         for (b in payload) {
-            sum += (b.toInt() and 0xFF)
+            crc += (b.toInt() and 0xFF)
         }
-        val checksum = sum and 0xFFFF
+        crc = crc and 0xFFFF
 
-        val raw = ByteArrayOutputStream().apply {
-            write(0x01) // START
-            write(length and 0xFF)
-            write((length shr 8) and 0xFF)
-            write(payload)
-            write(checksum and 0xFF)
-            write((checksum shr 8) and 0xFF)
-            write(0x02) // END
-        }.toByteArray()
+        val raw = ByteArrayOutputStream()
+        raw.write(length and 0xFF)
+        raw.write((length shr 8) and 0xFF)
+        raw.write(payload)
+        raw.write(crc and 0xFF)
+        raw.write((crc shr 8) and 0xFF)
 
-        val escaped = ByteArrayOutputStream()
-        escaped.write(raw[0].toInt()) // Start delimiter unescaped
-        for (i in 1 until raw.size - 1) {
-            val b = raw[i].toInt() and 0xFF
-            if (b in 0x01..0x03) {
-                escaped.write(0x03)
-                escaped.write(b xor 0x03)
+        val rawBytes = raw.toByteArray()
+        val out = ByteArrayOutputStream()
+        out.write(0x01) // START
+
+        for (b in rawBytes) {
+            val byteVal = b.toInt() and 0xFF
+            if (byteVal in 0x01..0x03) {
+                out.write(0x03)
+                out.write(byteVal xor 0x03)
             } else {
-                escaped.write(b)
+                out.write(byteVal)
             }
         }
-        escaped.write(raw.last().toInt()) // End delimiter unescaped
 
-        return escaped.toByteArray()
+        out.write(0x02) // END
+        return out.toByteArray()
     }
 }

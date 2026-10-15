@@ -15,6 +15,7 @@ import androidx.core.app.ActivityCompat
 class MainActivity : AppCompatActivity() {
 
     private lateinit var spinnerDevices: Spinner
+    private lateinit var etStation: EditText
     private lateinit var btnStart: Button
     private lateinit var btnStop: Button
     private lateinit var btnTest: Button
@@ -25,6 +26,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         spinnerDevices = findViewById(R.id.spinnerDevices)
+        etStation = findViewById(R.id.etStation)
         btnStart = findViewById(R.id.btnStart)
         btnStop = findViewById(R.id.btnStop)
         btnTest = findViewById(R.id.btnTest)
@@ -35,18 +37,20 @@ class MainActivity : AppCompatActivity() {
         btnStart.setOnClickListener {
             if (pairedList.isNotEmpty()) {
                 val selected = pairedList[spinnerDevices.selectedItemPosition]
+                val crs = etStation.text.toString().trim().uppercase().ifEmpty { "NCL" }
                 val intent = Intent(this, DivoomSyncService::class.java).apply {
                     action = DivoomSyncService.ACTION_START
                     putExtra(DivoomSyncService.EXTRA_MAC, selected.address)
+                    putExtra(DivoomSyncService.EXTRA_CRS, crs)
                 }
                 startService(intent)
-                Toast.makeText(this, "Starting Sync...", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Starting Live Board for $crs...", Toast.LENGTH_SHORT).show()
             }
         }
 
         btnTest.setOnClickListener {
             val intent = Intent(this, DivoomSyncService::class.java).apply {
-                action = DivoomSyncService.ACTION_TEST_RED
+                action = DivoomSyncService.ACTION_TEST_NCL
             }
             startService(intent)
         }
