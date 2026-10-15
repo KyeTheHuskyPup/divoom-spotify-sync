@@ -120,13 +120,18 @@ class DivoomSyncService : Service() {
                     delay(300)
                 }
 
+                // Switch to custom channel buffer
                 outputStream?.write(DivoomPacketEncoder.switchChannelCommand())
                 outputStream?.flush()
-                delay(50)
+                delay(60)
 
-                val packet = DivoomPacketEncoder.encodeImageToFrame(bmp)
-                outputStream?.write(packet)
-                outputStream?.flush()
+                // Send chunked palette frame packets
+                val packets = DivoomPacketEncoder.encodeImageToFrame(bmp)
+                for (packet in packets) {
+                    outputStream?.write(packet)
+                    outputStream?.flush()
+                    delay(30)
+                }
                 showToast("Art pushed to backpack!")
             } catch (e: Exception) {
                 showToast("Push failed: ${e.message}")
