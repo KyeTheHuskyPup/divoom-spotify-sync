@@ -37,6 +37,7 @@ class DivoomSyncService : Service() {
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
         const val ACTION_UPDATE_ART = "ACTION_UPDATE_ART"
+        const val ACTION_TEST_RED = "ACTION_TEST_RED"
         const val EXTRA_MAC = "EXTRA_MAC"
         const val EXTRA_IMAGE_BYTES = "EXTRA_IMAGE_BYTES"
         private const val CHANNEL_ID = "divoom_spotify_sync"
@@ -56,6 +57,9 @@ class DivoomSyncService : Service() {
             ACTION_START -> {
                 targetMac = intent.getStringExtra(EXTRA_MAC)
                 targetMac?.let { connectBluetooth(it) }
+            }
+            ACTION_TEST_RED -> {
+                sendTestPattern()
             }
             ACTION_UPDATE_ART -> {
                 val bytes = intent.getByteArrayExtra(EXTRA_IMAGE_BYTES)
@@ -100,13 +104,46 @@ class DivoomSyncService : Service() {
                     }
                 }
 
+                // Initial display mode wake
                 try {
-                    outputStream?.write(DivoomPacketEncoder.switchChannelCommand())
+                    outputStream?.write(DivoomPacketEncoder.setBrightness(100))
                     outputStream?.flush()
                 } catch (_: Exception) {}
 
             } catch (e: Exception) {
                 showToast("Bluetooth Error: ${e.message}")
+            }
+        }
+    }
+
+    private fun sendTestPattern() {
+        scope.launch {
+            try {
+                if (socket == null || socket?.isConnected != true) {
+                    targetMac?.let { connectBluetooth(it) }
+                    delay(300)
+                }
+
+                showToast("Testing display commands...")
+
+                // 1. Cycle channel to Custom/DIY mode
+                outputStream?.write(DivoomPacketEncoder.switchChannel(0x02))
+                outputStream?.flush()
+                delay(60)
+
+                // 2. Set max brightness
+                outputStream?.write(DivoomPacketEncoder.setBrightness(100))
+                outputStream?.flush()
+                delay(60)
+
+                // 3. Write solid red frame
+                val redFrame = DivoomPacketEncoder.encodeSolidColor(255, 0, 0)
+                outputStream?.write(redFrame)
+                outputStream?.flush()
+
+                showToast("Red frame sent!")
+            } catch (e: Exception) {
+                showToast("Test failed: ${e.message}")
             }
         }
     }
@@ -119,20 +156,14 @@ class DivoomSyncService : Service() {
                     delay(300)
                 }
 
-                // 1. Switch to Custom channel (0x04)
-                outputStream?.write(DivoomPacketEncoder.switchChannelCommand())
+                // Switch off clock mode
+                outputStream?.write(DivoomPacketEncoder.switchChannel(0x02))
                 outputStream?.flush()
-                delay(60)
+                delay(50)
 
-                // 2. Direct Draw Command (0x44 raw)
-                val rawDirect = DivoomPacketEncoder.encodeImageDirectRaw(bmp)
-                outputStream?.write(rawDirect)
-                outputStream?.flush()
-                delay(60)
-
-                // 3. Direct Set View Command (0x5B)
-                val setView = DivoomPacketEncoder.encodeImageSetView(bmp)
-                outputStream?.write(setView)
+                // Push frame
+                val frame = DivoomPacketEncoder.encodeImage(bmp)
+                outputStream?.write(frame)
                 outputStream?.flush()
 
                 showToast("Art pushed to backpack!")
