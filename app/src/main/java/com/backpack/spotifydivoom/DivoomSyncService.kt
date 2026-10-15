@@ -119,16 +119,22 @@ class DivoomSyncService : Service() {
                     delay(300)
                 }
 
+                // 1. Switch to Custom channel (0x04)
                 outputStream?.write(DivoomPacketEncoder.switchChannelCommand())
                 outputStream?.flush()
-                delay(50)
+                delay(60)
 
-                val packets = DivoomPacketEncoder.encodeImageToFrames(bmp)
-                for (packet in packets) {
-                    outputStream?.write(packet)
-                    outputStream?.flush()
-                    delay(30)
-                }
+                // 2. Direct Draw Command (0x44 raw)
+                val rawDirect = DivoomPacketEncoder.encodeImageDirectRaw(bmp)
+                outputStream?.write(rawDirect)
+                outputStream?.flush()
+                delay(60)
+
+                // 3. Direct Set View Command (0x5B)
+                val setView = DivoomPacketEncoder.encodeImageSetView(bmp)
+                outputStream?.write(setView)
+                outputStream?.flush()
+
                 showToast("Art pushed to backpack!")
             } catch (e: Exception) {
                 showToast("Push failed: ${e.message}")

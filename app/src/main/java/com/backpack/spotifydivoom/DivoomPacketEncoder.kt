@@ -2,120 +2,59 @@ package com.backpack.spotifydivoom
 
 import android.graphics.Bitmap
 import java.io.ByteArrayOutputStream
-import kotlin.math.ceil
-import kotlin.math.log2
-import kotlin.math.max
 
 object DivoomPacketEncoder {
 
-    // Switch backpack channel to custom buffer
+    // Switch backpack channel to Custom 1 (0x04)
     fun switchChannelCommand(): ByteArray {
-        return wrapPacket(byteArrayOf(0x45, 0x05))
+        return wrapPacket(byteArrayOf(0x45, 0x04))
     }
 
-    fun encodeImageToFrames(original: Bitmap): List<ByteArray> {
-        val scaled = Bitmap.createScaledBitmap(original, 16, 16, false)
-        val palette = mutableListOf<Int>()
-        val pixelIndices = IntArray(256)
+    // Direct 16x16 image draw command (0x44 direct raw RGB stream)
+    fun encodeImageDirectRaw(original: Bitmap): ByteArray {
+        val scaled = Bitmap.createScaledBitmap(original, 16, 16, true)
+        val stream = ByteArrayOutputStream()
+
+        // Direct draw header for Divoom-Backpack
+        // Command 0x44, frame 0, delay 0, direct RGB mode (0x00)
+        stream.write(0x44)
+        stream.write(0x00) // frame id low
+        stream.write(0x00) // frame id high
+        stream.write(0x00) // delay low
+        stream.write(0x00) // delay high
+        stream.write(0x00) // 24-bit raw RGB mode
 
         for (y in 0 until 16) {
             for (x in 0 until 16) {
-                val pixel = scaled.getPixel(x, y) and 0x00FFFFFF
-                var idx = palette.indexOf(pixel)
-                if (idx == -1) {
-                    if (palette.size < 256) {
-                        palette.add(pixel)
-                        idx = palette.size - 1
-                    } else {
-                        idx = 0
-                    }
-                }
-                pixelIndices[y * 16 + x] = idx
+                val pixel = scaled.getPixel(x, y)
+                stream.write((pixel shr 16) and 0xFF) // R
+                stream.write((pixel shr 8) and 0xFF)  // G
+                stream.write(pixel and 0xFF)         // B
             }
         }
 
-        val paletteCount = palette.size
-        val bitsPerPixel = if (paletteCount <= 1) 1 else max(1, ceil(log2(paletteCount.toDouble())).toInt())
-
-        val frameDataStream = ByteArrayOutputStream()
-
-        // Write palette RGB data (3 bytes per color)
-        for (col in palette) {
-            frameDataStream.write((col shr 16) and 0xFF)
-            frameDataStream.write((col shr 8) and 0xFF)
-            frameDataStream.write(col and 0xFF)
-        }
-
-        // Bit-pack the pixel indices
-        var bitBuffer = 0
-        var bitCount = 0
-        for (idx in pixelIndices) {
-            bitBuffer = bitBuffer or (idx shl bitCount)
-            bitCount += bitsPerPixel
-            while (bitCount >= 8) {
-                frameDataStream.write(bitBuffer and 0xFF)
-                bitBuffer = bitBuffer ushr 8
-                bitCount -= 8
-            }
-        }
-        if (bitCount > 0) {
-            frameDataStream.write(bitBuffer and 0xFF)
-        }
-
-        val rawFrameBytes = frameDataStream.toByteArray()
-
-        // Frame header:
-        // [0xAA, FrameTotalLen_L, FrameTotalLen_H, Delay_L, Delay_H, ResetPalette(0), PaletteSize_L, PaletteSize_H]
-        val frameHeader = ByteArrayOutputStream().apply {
-            write(0xAA)
-            val frameDataSize = rawFrameBytes.size
-            write(frameDataSize and 0xFF)
-            write((frameDataSize shr 8) and 0xFF)
-            write(0x00) // Delay L
-            write(0x00) // Delay H
-            write(0x00) // Palette reset flag
-            write(paletteCount and 0xFF)
-            write((paletteCount shr 8) and 0xFF)
-        }.toByteArray()
-
-        val fullFramePayload = frameHeader + rawFrameBytes
-        val totalSize = fullFramePayload.size
-
-        // Total stream payload prefixed with total size (32-bit little endian)
-        val fullStream = ByteArrayOutputStream().apply {
-            write(totalSize and 0xFF)
-            write((totalSize shr 8) and 0xFF)
-            write((totalSize shr 16) and 0xFF)
-            write((totalSize shr 24) and 0xFF)
-            write(fullFramePayload)
-        }.toByteArray()
-
-        val packets = mutableListOf<ByteArray>()
-        var offset = 0
-        var packageId = 0
-        val maxChunk = 350 // Safe SPP transmission chunk size
-
-        while (offset < fullStream.size) {
-            val chunkLength = minOf(maxChunk, fullStream.size - offset)
-            val chunkBytes = fullStream.copyOfRange(offset, offset + chunkLength)
-
-            // Divoom 0x44 chunk payload: [0x44, PackageId_L, PackageId_H] + ChunkBytes
-            val chunkPayload = ByteArrayOutputStream().apply {
-                write(0x44)
-                write(packageId and 0xFF)
-                write((packageId shr 8) and 0xFF)
-                write(chunkBytes)
-            }.toByteArray()
-
-            packets.add(wrapPacket(chunkPayload))
-            offset += chunkLength
-            packageId++
-        }
-
-        return packets
+        return wrapPacket(stream.toByteArray())
     }
 
-    private fun wrapPacket(payload: ByteArray): ByteArray {
+    // Modern 0x5B direct static image packet
+    fun encodeImageSetView(original: Bitmap): ByteArray {
+        val scaled = Bitmap.createScaledBitmap(original, 16, 16, true)
+        val stream = ByteArrayOutputStream()
+        stream.write(0x5B)
+        stream.write(0x01) // 16x16 mode indicator
+
+        for (y in 0 until 16) {
+            for (x in 0 until 16) {
+                val pixel = scaled.getPixel(x, y)
+                stream.write((pixel shr 16) and 0xFF)
+                stream.write((pixel shr 8) and 0xFF)
+                stream.write(pixel and 0xFF)
+            }
+        }
+        return wrapPacket(stream.toByteArray())
+    }
+
+    fun wrapPacket(payload: ByteArray): ByteArray {
         val length = payload.size + 2
         var sum = 0
         for (b in payload) {
