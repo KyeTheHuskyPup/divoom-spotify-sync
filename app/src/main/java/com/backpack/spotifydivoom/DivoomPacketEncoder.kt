@@ -5,9 +5,16 @@ import java.io.ByteArrayOutputStream
 
 object DivoomPacketEncoder {
 
-    // Switch backpack channel to custom buffer
+    // Switch backpack channel to custom buffer (0x45 0x01)
     fun switchChannelCommand(): ByteArray {
-        return wrapPacket(byteArrayOf(0x45, 0x05))
+        return wrapPacket(byteArrayOf(0x45, 0x01))
+    }
+
+    // Animation initialization command (0x49)
+    // Informs the display that 1 frame is about to be sent
+    fun initAnimationCommand(): ByteArray {
+        val payload = byteArrayOf(0x49, 0x01, 0x00, 0x00)
+        return wrapPacket(payload)
     }
 
     // Encodes a 16x16 bitmap into standard Divoom 16x16 frame format (0x44 with palette)
@@ -88,7 +95,7 @@ object DivoomPacketEncoder {
         val fullPayload = header + frameBytes
         val packets = mutableListOf<ByteArray>()
 
-        // Split into 400-byte max chunks to respect Bluetooth RFCOMM buffer limits
+        // Split into chunks under 400 bytes to respect Bluetooth RFCOMM buffer limits
         var pos = 0
         while (pos < fullPayload.size) {
             val chunkSize = minOf(400, fullPayload.size - pos)
