@@ -2,9 +2,11 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
 }
+
 android {
     namespace = "com.backpack.spotifydivoom"
     compileSdk = 34
+
     defaultConfig {
         applicationId = "com.backpack.spotifydivoom"
         minSdk = 26
@@ -12,8 +14,21 @@ android {
         versionCode = 1
         versionName = "1.0"
     }
-    buildFeatures { viewBinding = true }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    buildFeatures {
+        viewBinding = true
+    }
 }
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
