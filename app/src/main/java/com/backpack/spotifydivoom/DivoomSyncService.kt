@@ -13,6 +13,7 @@ import android.content.Intent
 import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
@@ -99,7 +100,6 @@ class DivoomSyncService : Service() {
                     }
                 }
 
-                // Send switch to custom/DIY channel command to prepare frame buffer
                 try {
                     val unlockCmd = DivoomPacketEncoder.switchChannelCommand()
                     outputStream?.write(unlockCmd)
@@ -120,12 +120,10 @@ class DivoomSyncService : Service() {
                     delay(300)
                 }
 
-                // 1. Ensure channel is set to custom DIY mode
                 outputStream?.write(DivoomPacketEncoder.switchChannelCommand())
                 outputStream?.flush()
                 delay(50)
 
-                // 2. Blast frame packet
                 val packet = DivoomPacketEncoder.encodeImageToFrame(bmp)
                 outputStream?.write(packet)
                 outputStream?.flush()
