@@ -1,48 +1,84 @@
 package com.backpack.spotifydivoom
 
+import android.app.Notification
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.drawable.Icon
 import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
-import android.media.session.PlaybackState
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.service.notification.NotificationListenerService
+import android.service.notification.StatusBarNotification
 import android.widget.Toast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 
 class SpotifyMediaListenerService : NotificationListenerService() {
 
     private val job = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.IO + job)
-    private var lastTrackId: String? = null
+    private var lastTrackKey: String? = null
 
     private val callback = object : MediaController.Callback() {
         override fun onMetadataChanged(metadata: MediaMetadata?) {
             super.onMetadataChanged(metadata)
-            metadata?.let { processMetadata(it) }
-        }
-
-        override fun onPlaybackStateChanged(state: PlaybackState?) {
-            super.onPlaybackStateChanged(state)
+            metadata?.let { inspectAndExtract(it, null) }
         }
     }
 
     override fun onListenerConnected() {
         super.onListenerConnected()
         registerMediaControllers()
+    }
+
+    override fun onNotificationPosted(sbn: StatusBarNotification?) {
+        super.onNotificationPosted(sbn)
+        if (sbn?.packageName == "com.spotify.music") {
+            val notification = sbn.notification ?: return
+            val extras = notification.extras ?: return
+            val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: return
+            val artist = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
+
+            // Extract bitmap directly from notification extras
+            var notifBitmap: Bitmap? = null
+
+            // 1. Try Large Icon
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val icon = extras.getParcelable(Notification.EXTRA_LARGE_ICON_BIG, Icon::class.java)
+                    ?: extras.getParcelable(Notification.EXTRA_LARGE_ICON, Icon::class.java)
+                icon?.let {
+                    try {
+                        val drawable = it.loadDrawable(this)
+                        if (drawable is android.graphics.drawable.BitmapDrawable) {
+                            notifBitmap = drawable.bitmap
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+
+            if (notifBitmap == null) {
+                @Suppress("DEPRECATION")
+                notifBitmap = extras.getParcelable(Notification.EXTRA_PICTURE)
+                    ?: extras.getParcelable(Notification.EXTRA_LARGE_ICON)
+            }
+
+            inspectAndExtract(null, notifBitmap, title, artist)
+        }
     }
 
     private fun registerMediaControllers() {
@@ -54,40 +90,57 @@ class SpotifyMediaListenerService : NotificationListenerService() {
             for (controller in controllers) {
                 if (controller.packageName == "com.spotify.music") {
                     controller.registerCallback(callback)
-                    controller.metadata?.let { processMetadata(it) }
+                    controller.metadata?.let { inspectAndExtract(it, null) }
                     break
                 }
             }
         } catch (_: Exception) {}
     }
 
-    private fun processMetadata(metadata: MediaMetadata) {
-        val title = metadata.getString(MediaMetadata.METADATA_KEY_TITLE) ?: return
-        val artist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST) ?: ""
-        val trackKey = "$title-$artist"
+    private fun inspectAndExtract(
+        metadata: MediaMetadata?,
+        directBitmap: Bitmap?,
+        fallbackTitle: String = "",
+        fallbackArtist: String = ""
+    ) {
+        val title = metadata?.getString(MediaMetadata.METADATA_KEY_TITLE) ?: fallbackTitle
+        val artist = metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST) ?: fallbackArtist
 
-        if (trackKey == lastTrackId) return
-        lastTrackId = trackKey
+        if (title.isBlank()) return
+        val trackKey = "$title - $artist"
+        if (trackKey == lastTrackKey) return
+        lastTrackKey = trackKey
 
-        showToast("Playing: $title")
+        showToast("Now Playing: $title")
 
         scope.launch {
-            var bitmap: Bitmap? = metadata.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
-                ?: metadata.getBitmap(MediaMetadata.METADATA_KEY_ART)
+            // Priority 1: Direct Bitmap from Notification Icon
+            var bitmap: Bitmap? = directBitmap
 
-            if (bitmap == null) {
-                val artUriString = metadata.getString(MediaMetadata.METADATA_KEY_ALBUM_ART_URI)
+            // Priority 2: Direct Bitmap from MediaSession
+            if (bitmap == null && metadata != null) {
+                bitmap = metadata.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
+                    ?: metadata.getBitmap(MediaMetadata.METADATA_KEY_ART)
+            }
+
+            // Priority 3: URI from MediaSession
+            if (bitmap == null && metadata != null) {
+                val uriStr = metadata.getString(MediaMetadata.METADATA_KEY_ALBUM_ART_URI)
                     ?: metadata.getString(MediaMetadata.METADATA_KEY_ART_URI)
-
-                if (!artUriString.isNullOrEmpty()) {
-                    bitmap = fetchBitmapFromUri(artUriString)
+                if (!uriStr.isNullOrEmpty()) {
+                    bitmap = fetchBitmapFromUri(uriStr)
                 }
+            }
+
+            // Priority 4: Universal open metadata fallback (No API key needed)
+            if (bitmap == null) {
+                bitmap = fetchFallbackArt(title, artist)
             }
 
             if (bitmap != null) {
                 sendBitmapToService(bitmap)
             } else {
-                showToast("Could not extract art for $title")
+                showToast("Could not resolve art for: $title")
             }
         }
     }
@@ -99,16 +152,37 @@ class SpotifyMediaListenerService : NotificationListenerService() {
                 val conn = url.openConnection() as HttpURLConnection
                 conn.connectTimeout = 4000
                 conn.readTimeout = 4000
-                conn.inputStream.use { input ->
-                    BitmapFactory.decodeStream(input)
-                }
+                conn.inputStream.use { BitmapFactory.decodeStream(it) }
             } else {
                 val uri = Uri.parse(uriString)
-                contentResolver.openInputStream(uri)?.use { input ->
-                    BitmapFactory.decodeStream(input)
+                contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private suspend fun fetchFallbackArt(title: String, artist: String): Bitmap? = withContext(Dispatchers.IO) {
+        try {
+            val query = URLEncoder.encode("$title $artist", "UTF-8")
+            val url = URL("https://itunes.apple.com/search?term=$query&media=music&entity=song&limit=1")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.connectTimeout = 5000
+            conn.readTimeout = 5000
+
+            val jsonStr = conn.inputStream.bufferedReader().use { it.readText() }
+            val jsonObj = JSONObject(jsonStr)
+            val results = jsonObj.optJSONArray("results")
+            if (results != null && results.length() > 0) {
+                val artworkUrl = results.getJSONObject(0).optString("artworkUrl100")
+                if (artworkUrl.isNotEmpty()) {
+                    val artConn = URL(artworkUrl).openConnection() as HttpURLConnection
+                    artConn.connectTimeout = 5000
+                    return@withContext artConn.inputStream.use { BitmapFactory.decodeStream(it) }
                 }
             }
-        } catch (e: Exception) {
+            null
+        } catch (_: Exception) {
             null
         }
     }
