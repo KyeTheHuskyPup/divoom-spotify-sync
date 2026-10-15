@@ -13,13 +13,13 @@ import android.content.Intent
 import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Handler
-import android.os.IBinder
 import android.os.Looper
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.OutputStream
 import java.util.UUID
@@ -87,7 +87,6 @@ class DivoomSyncService : Service() {
                     outputStream = socket?.outputStream
                     showToast("Connected to Backpack!")
                 } catch (e: Exception) {
-                    // Fallback via reflection on RFCOMM channel 1
                     try {
                         val method = device.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
                         socket = method.invoke(device, 1) as BluetoothSocket
@@ -96,8 +95,17 @@ class DivoomSyncService : Service() {
                         showToast("Connected via fallback port!")
                     } catch (ex: Exception) {
                         showToast("Bluetooth Connection Failed: ${ex.message}")
+                        return@launch
                     }
                 }
+
+                // Send switch to custom/DIY channel command to prepare frame buffer
+                try {
+                    val unlockCmd = DivoomPacketEncoder.switchChannelCommand()
+                    outputStream?.write(unlockCmd)
+                    outputStream?.flush()
+                } catch (_: Exception) {}
+
             } catch (e: Exception) {
                 showToast("Bluetooth Error: ${e.message}")
             }
@@ -109,7 +117,15 @@ class DivoomSyncService : Service() {
             try {
                 if (socket == null || socket?.isConnected != true) {
                     targetMac?.let { connectBluetooth(it) }
+                    delay(300)
                 }
+
+                // 1. Ensure channel is set to custom DIY mode
+                outputStream?.write(DivoomPacketEncoder.switchChannelCommand())
+                outputStream?.flush()
+                delay(50)
+
+                // 2. Blast frame packet
                 val packet = DivoomPacketEncoder.encodeImageToFrame(bmp)
                 outputStream?.write(packet)
                 outputStream?.flush()
