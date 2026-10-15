@@ -119,18 +119,11 @@ class DivoomSyncService : Service() {
                     delay(300)
                 }
 
-                // 1. Set channel to custom display mode
                 outputStream?.write(DivoomPacketEncoder.switchChannelCommand())
                 outputStream?.flush()
-                delay(40)
+                delay(50)
 
-                // 2. Send animation init command (0x49) to open frame buffer
-                outputStream?.write(DivoomPacketEncoder.initAnimationCommand())
-                outputStream?.flush()
-                delay(40)
-
-                // 3. Send the encoded palette frame chunks
-                val packets = DivoomPacketEncoder.encodeImageToFrame(bmp)
+                val packets = DivoomPacketEncoder.encodeImageToFrames(bmp)
                 for (packet in packets) {
                     outputStream?.write(packet)
                     outputStream?.flush()
