@@ -81,28 +81,25 @@ class DivoomSyncService : Service() {
                 val device: BluetoothDevice = adapter.getRemoteDevice(mac)
                 adapter.cancelDiscovery()
 
-                // Fallback attempt: Insecure socket first, then secure, then RFCOMM channel reflection
-                socket = try {
-                    device.createInsecureRfcommSocketToServiceRecord(SPP_UUID)
-                } catch (e: Exception) {
-                    device.createRfcommSocketToServiceRecord(SPP_UUID)
-                }
-
-                socket?.connect()
-                outputStream = socket?.outputStream
-
-                showToast("Connected to Backpack!")
-            } catch (e: Exception) {
-                // Secondary fallback via direct reflection on channel 1
                 try {
-                    val method = device.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
-                    socket = method.invoke(device, 1) as BluetoothSocket
+                    socket = device.createInsecureRfcommSocketToServiceRecord(SPP_UUID)
                     socket?.connect()
                     outputStream = socket?.outputStream
-                    showToast("Connected via fallback port!")
-                } catch (ex: Exception) {
-                    showToast("Bluetooth Connection Failed: ${ex.message}")
+                    showToast("Connected to Backpack!")
+                } catch (e: Exception) {
+                    // Fallback via reflection on RFCOMM channel 1
+                    try {
+                        val method = device.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
+                        socket = method.invoke(device, 1) as BluetoothSocket
+                        socket?.connect()
+                        outputStream = socket?.outputStream
+                        showToast("Connected via fallback port!")
+                    } catch (ex: Exception) {
+                        showToast("Bluetooth Connection Failed: ${ex.message}")
+                    }
                 }
+            } catch (e: Exception) {
+                showToast("Bluetooth Error: ${e.message}")
             }
         }
     }
