@@ -19,6 +19,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnStart: Button
     private lateinit var btnStop: Button
     private lateinit var btnTest: Button
+    private lateinit var btnPing: Button
     private val pairedList = mutableListOf<BluetoothDevice>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -30,9 +31,24 @@ class MainActivity : AppCompatActivity() {
         btnStart = findViewById(R.id.btnStart)
         btnStop = findViewById(R.id.btnStop)
         btnTest = findViewById(R.id.btnTest)
+        btnPing = findViewById(R.id.btnPing)
 
         checkPermissions()
         loadPairedDevices()
+
+        btnPing.setOnClickListener {
+            val intent = Intent(this, DivoomSyncService::class.java).apply {
+                action = DivoomSyncService.ACTION_PING_BRIGHTNESS
+            }
+            startService(intent)
+        }
+
+        btnTest.setOnClickListener {
+            val intent = Intent(this, DivoomSyncService::class.java).apply {
+                action = DivoomSyncService.ACTION_TEST_NCL
+            }
+            startService(intent)
+        }
 
         btnStart.setOnClickListener {
             if (pairedList.isNotEmpty()) {
@@ -46,13 +62,6 @@ class MainActivity : AppCompatActivity() {
                 startService(intent)
                 Toast.makeText(this, "Starting Live Board for $crs...", Toast.LENGTH_SHORT).show()
             }
-        }
-
-        btnTest.setOnClickListener {
-            val intent = Intent(this, DivoomSyncService::class.java).apply {
-                action = DivoomSyncService.ACTION_TEST_NCL
-            }
-            startService(intent)
         }
 
         btnStop.setOnClickListener {

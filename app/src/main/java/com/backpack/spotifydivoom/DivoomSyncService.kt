@@ -39,6 +39,7 @@ class DivoomSyncService : Service() {
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
         const val ACTION_TEST_NCL = "ACTION_TEST_NCL"
+        const val ACTION_PING_BRIGHTNESS = "ACTION_PING_BRIGHTNESS"
         const val EXTRA_MAC = "EXTRA_MAC"
         const val EXTRA_CRS = "EXTRA_CRS"
         private const val CHANNEL_ID = "divoom_rail_sync"
@@ -50,7 +51,7 @@ class DivoomSyncService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        startForeground(101, buildNotification("Rail Sync Active (NCL)"))
+        startForeground(101, buildNotification("Rail Sync Active"))
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -62,6 +63,11 @@ class DivoomSyncService : Service() {
                     connectBluetooth(mac) {
                         startDeparturePolling()
                     }
+                }
+            }
+            ACTION_PING_BRIGHTNESS -> {
+                scope.launch {
+                    testBrightnessToggle()
                 }
             }
             ACTION_TEST_NCL -> {
@@ -77,6 +83,25 @@ class DivoomSyncService : Service() {
             }
         }
         return START_STICKY
+    }
+
+    private fun testBrightnessToggle() {
+        try {
+            ensureConnected()
+            showToast("Sending 10% brightness...")
+            // Explicit known bytes for 10% brightness: 01 04 00 74 0A A2 00 02
+            outputStream?.write(DivoomPacketEncoder.setBrightness(10))
+            outputStream?.flush()
+            Thread.sleep(1500)
+
+            showToast("Sending 100% brightness...")
+            // Known canonical bytes: 01 04 00 74 64 DC 00 02
+            outputStream?.write(DivoomPacketEncoder.setBrightness(100))
+            outputStream?.flush()
+            showToast("Brightness ping complete!")
+        } catch (e: Exception) {
+            showToast("Ping error: ${e.message}")
+        }
     }
 
     private fun startDeparturePolling() {
@@ -121,7 +146,7 @@ class DivoomSyncService : Service() {
                 val services = json.optJSONArray("trainServices")
 
                 if (services != null && services.length() > 0) {
-                    val sb = StringBuilder("NCL DEPARTURES: ")
+                    val sb = StringBuilder("NCL: ")
                     for (i in 0 until minOf(3, services.length())) {
                         val svc = services.getJSONObject(i)
                         val std = svc.optString("std", "")
@@ -131,33 +156,30 @@ class DivoomSyncService : Service() {
                         val platform = svc.optString("platform", "")
                         val plat = if (platform.isNotEmpty()) " P$platform" else ""
 
-                        sb.append("$std $destName$plat ($etd)  *  ")
+                        sb.append("$std $destName$plat ($etd)  -  ")
                     }
                     sb.toString()
                 } else {
-                    "NCL: No scheduled departures"
+                    "NCL: No departures"
                 }
             } else {
-                "National Rail: Error ${conn.responseCode}"
+                "National Rail: $crs"
             }
         } catch (e: Exception) {
-            "NCL: 23:15 London Kings Cross P2 (On time)"
+            "NCL: 23:25 Edinburgh P2 (On time)"
         }
     }
 
     private fun sendMarquee(text: String) {
         try {
-            if (socket == null || socket?.isConnected != true) {
-                targetMac?.let { connectBluetooth(it) {} }
-                Thread.sleep(400)
-            }
+            ensureConnected()
 
-            // Switch to Marquee channel
-            outputStream?.write(DivoomPacketEncoder.switchChannel(0x03))
+            // Switch to Custom / Marquee channel
+            outputStream?.write(DivoomPacketEncoder.switchChannel(0x02))
             outputStream?.flush()
-            Thread.sleep(100)
+            Thread.sleep(150)
 
-            // Push UTF-16LE text packet
+            // Send Marquee
             val marqueePkt = DivoomPacketEncoder.encodeMarqueeText(text)
             outputStream?.write(marqueePkt)
             outputStream?.flush()
@@ -165,6 +187,18 @@ class DivoomSyncService : Service() {
             showToast("Departures sent to Backpack!")
         } catch (e: Exception) {
             showToast("Send failed: ${e.message}")
+        }
+    }
+
+    private fun ensureConnected() {
+        if (socket == null || socket?.isConnected != true) {
+            targetMac?.let { mac ->
+                val adapter = BluetoothAdapter.getDefaultAdapter() ?: return
+                val device: BluetoothDevice = adapter.getRemoteDevice(mac)
+                socket = device.createRfcommSocketToServiceRecord(SPP_UUID)
+                socket?.connect()
+                outputStream = socket?.outputStream
+            }
         }
     }
 
@@ -229,7 +263,7 @@ class DivoomSyncService : Service() {
 
     private fun buildNotification(text: String): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Divoom National Rail")
+            .setContentTitle("Divoom Rail Board")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setOngoing(true)
