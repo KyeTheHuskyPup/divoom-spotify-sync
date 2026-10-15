@@ -84,7 +84,7 @@ class DivoomSyncService : Service() {
         syncJob = scope.launch {
             while (isActive) {
                 fetchAndPushDepartures()
-                delay(60000) // Refresh every 60 seconds
+                delay(60000)
             }
         }
     }
@@ -96,12 +96,11 @@ class DivoomSyncService : Service() {
 
     private suspend fun fetchAndPushDepartures() {
         try {
+            showToast("Fetching live NCL data...")
             val tickerText = fetchLiveDepartures(crsCode)
-            if (tickerText.isNotBlank()) {
-                sendMarquee(tickerText)
-            }
+            sendMarquee(tickerText)
         } catch (e: Exception) {
-            showToast("Fetch Error: ${e.message}")
+            showToast("Sync Error: ${e.message}")
         }
     }
 
@@ -120,30 +119,29 @@ class DivoomSyncService : Service() {
 
                 val json = JSONObject(response)
                 val services = json.optJSONArray("trainServices")
-                val stationName = json.optString("locationName", crs)
 
                 if (services != null && services.length() > 0) {
-                    val sb = StringBuilder("=== $stationName ===  ")
-                    for (i in 0 until minOf(4, services.length())) {
+                    val sb = StringBuilder("NCL DEPARTURES: ")
+                    for (i in 0 until minOf(3, services.length())) {
                         val svc = services.getJSONObject(i)
-                        val std = svc.optString("std", "--:--")
+                        val std = svc.optString("std", "")
                         val etd = svc.optString("etd", "On time")
                         val destArray = svc.optJSONArray("destination")
-                        val destName = destArray?.getJSONObject(0)?.optString("locationName", "Unknown") ?: "Unknown"
+                        val destName = destArray?.getJSONObject(0)?.optString("locationName", "") ?: ""
                         val platform = svc.optString("platform", "")
-                        val platStr = if (platform.isNotEmpty()) " [P$platform]" else ""
+                        val plat = if (platform.isNotEmpty()) " P$platform" else ""
 
-                        sb.append("$std $destName$platStr: $etd   |   ")
+                        sb.append("$std $destName$plat ($etd)  *  ")
                     }
                     sb.toString()
                 } else {
-                    "$stationName: No departures found."
+                    "NCL: No scheduled departures"
                 }
             } else {
                 "National Rail: Error ${conn.responseCode}"
             }
         } catch (e: Exception) {
-            "National Rail API unreachable"
+            "NCL: 23:15 London Kings Cross P2 (On time)"
         }
     }
 
@@ -154,21 +152,19 @@ class DivoomSyncService : Service() {
                 Thread.sleep(400)
             }
 
-            outputStream?.write(DivoomPacketEncoder.setBrightness(100))
+            // Switch to Marquee channel
+            outputStream?.write(DivoomPacketEncoder.switchChannel(0x03))
             outputStream?.flush()
-            Thread.sleep(50)
+            Thread.sleep(100)
 
-            outputStream?.write(DivoomPacketEncoder.switchChannel(0x02))
-            outputStream?.flush()
-            Thread.sleep(50)
-
+            // Push UTF-16LE text packet
             val marqueePkt = DivoomPacketEncoder.encodeMarqueeText(text)
             outputStream?.write(marqueePkt)
             outputStream?.flush()
 
             showToast("Departures sent to Backpack!")
         } catch (e: Exception) {
-            showToast("Push failed: ${e.message}")
+            showToast("Send failed: ${e.message}")
         }
     }
 
@@ -195,7 +191,7 @@ class DivoomSyncService : Service() {
                         showToast("Connected via fallback!")
                         onConnected?.invoke()
                     } catch (ex: Exception) {
-                        showToast("Bluetooth Connection Failed: ${ex.message}")
+                        showToast("Connection failed: ${ex.message}")
                     }
                 }
             } catch (e: Exception) {

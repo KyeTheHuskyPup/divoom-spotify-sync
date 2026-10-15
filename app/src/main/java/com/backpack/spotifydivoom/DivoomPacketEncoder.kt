@@ -5,8 +5,8 @@ import java.nio.charset.StandardCharsets
 
 object DivoomPacketEncoder {
 
-    // Switch backpack channel to custom buffer
-    fun switchChannel(channel: Byte = 0x02): ByteArray {
+    // Set Channel (0x03 is dedicated scrolling text / marquee)
+    fun switchChannel(channel: Byte = 0x03): ByteArray {
         return makePacket(byteArrayOf(0x45, channel))
     }
 
@@ -16,22 +16,24 @@ object DivoomPacketEncoder {
         return makePacket(byteArrayOf(0x74, lvl))
     }
 
-    // Divoom Built-in Scrolling Text Command (0x73)
-    // R, G, B = 255, 180, 0 (classic amber rail indicator color)
+    // Divoom 16x16 Native Scrolling Marquee
+    // Text must be UTF-16LE encoded with little-endian 16-bit length
     fun encodeMarqueeText(text: String, r: Int = 255, g: Int = 180, b: Int = 0): ByteArray {
-        val textBytes = text.toByteArray(StandardCharsets.UTF_8)
-        val stream = ByteArrayOutputStream()
+        val textBytes = text.toByteArray(StandardCharsets.UTF_16LE)
+        val textLen = textBytes.size
 
-        stream.write(0x73) // Marquee Command ID
-        stream.write(0x00) // Slot ID (0-19)
-        stream.write(0x00) // Alignment / Mode
-        stream.write(r and 0xFF) // Text Color R
-        stream.write(g and 0xFF) // Text Color G
-        stream.write(b and 0xFF) // Text Color B
-        stream.write(0x40)       // Scroll Speed (0x00 - 0x64)
-        stream.write(0x00)       // Direction (0x00 = Left, 0x01 = Right)
-        stream.write(0x00)       // Font ID (0 = Standard 5x7)
-        stream.write(textBytes.size and 0xFF) // String length (bytes)
+        val stream = ByteArrayOutputStream()
+        stream.write(0x73) // Command ID
+        stream.write(0x00) // Text Slot
+        stream.write(r and 0xFF) // Red
+        stream.write(g and 0xFF) // Green
+        stream.write(b and 0xFF) // Blue
+        stream.write(0x30)       // Speed
+        stream.write(0x00)       // Direction (0x00 = Left)
+        stream.write(0x00)       // Font index
+        // 16-bit little-endian character byte length:
+        stream.write(textLen and 0xFF)
+        stream.write((textLen shr 8) and 0xFF)
         stream.write(textBytes)
 
         return makePacket(stream.toByteArray())
